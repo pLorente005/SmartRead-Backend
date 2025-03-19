@@ -18,7 +18,6 @@ namespace FunctionAppSmartRead
         public Function1(ILogger<Function1> logger)
         {
             _logger = logger;
-            // Se obtiene la cadena de conexión de la variable de entorno "conexionSQL"
             _connectionString = Environment.GetEnvironmentVariable("conexionSQL")
                 ?? throw new InvalidOperationException("La variable de entorno 'conexionSQL' no está configurada.");
         }
@@ -29,7 +28,6 @@ namespace FunctionAppSmartRead
         {
             _logger.LogInformation("Función ejecutada.");
 
-            // Se obtienen los parámetros de consulta: username y password.
             string username = req.Query["username"];
             string password = req.Query["password"];
 
@@ -45,8 +43,7 @@ namespace FunctionAppSmartRead
                 {
                     await conn.OpenAsync();
 
-                    // Escapar el nombre de la tabla usando corchetes.
-                    string query = "SELECT COUNT(1) FROM [User] WHERE Username = @username AND password = @password";
+                    string query = "SELECT COUNT(1) FROM [User] WHERE Username = @username AND Password = @password";
                     using (SqlCommand cmd = new SqlCommand(query, conn))
                     {
                         cmd.Parameters.AddWithValue("@username", username);
@@ -63,13 +60,77 @@ namespace FunctionAppSmartRead
                 return new StatusCodeResult(StatusCodes.Status500InternalServerError);
             }
 
-            if (userCount > 0)
+            return userCount > 0 ? new OkObjectResult("Autenticación exitosa.") : new UnauthorizedResult();
+        }
+    }
+
+    public class Function2
+    {
+        private readonly ILogger<Function2> _logger;
+        private readonly string _connectionString;
+
+        public Function2(ILogger<Function2> logger)
+        {
+            _logger = logger;
+            _connectionString = Environment.GetEnvironmentVariable("conexionSQL")
+                ?? throw new InvalidOperationException("La variable de entorno 'conexionSQL' no está configurada.");
+        }
+
+        [Function("Function2")]
+        public async Task<IActionResult> Run(
+            [HttpTrigger(AuthorizationLevel.Function, "post")] HttpRequest req)
+        {
+            _logger.LogInformation("Función de registro ejecutada.");
+
+            string username = req.Query["username"];
+            string password = req.Query["password"];
+            string email = req.Query["email"];
+
+            if (string.IsNullOrWhiteSpace(username) || string.IsNullOrWhiteSpace(password) || string.IsNullOrWhiteSpace(email))
             {
-                return new OkObjectResult("Autenticación exitosa.");
+                return new BadRequestObjectResult("Debe proporcionar 'username', 'password' y 'email'.");
             }
-            else
+
+            try
             {
-                return new UnauthorizedResult();
+                using (SqlConnection conn = new SqlConnection(_connectionString))
+                {
+                    await conn.OpenAsync();
+
+                    // Verificar si el usuario o el correo ya existen
+                    string checkQuery = "SELECT COUNT(1) FROM [User] WHERE Username = @username OR Email = @email";
+                    using (SqlCommand checkCmd = new SqlCommand(checkQuery, conn))
+                    {
+                        checkCmd.Parameters.AddWithValue("@username", username);
+                        checkCmd.Parameters.AddWithValue("@email", email);
+                        object checkResult = await checkCmd.ExecuteScalarAsync();
+                        int existingUserCount = (checkResult != null ? Convert.ToInt32(checkResult) : 0);
+
+                        if (existingUserCount > 0)
+                        {
+                            return new ConflictObjectResult("El usuario o el correo ya existen.");
+                        }
+                    }
+
+                    // Insertar nuevo usuario con email
+                    string insertQuery = "INSERT INTO [User] (Username, Password, Email) VALUES (@username, @password, @email)";
+                    using (SqlCommand insertCmd = new SqlCommand(insertQuery, conn))
+                    {
+                        insertCmd.Parameters.AddWithValue("@username", username);
+                        insertCmd.Parameters.AddWithValue("@password", password);
+                        insertCmd.Parameters.AddWithValue("@email", email);
+
+                        int rowsAffected = await insertCmd.ExecuteNonQueryAsync();
+                        return rowsAffected > 0
+                            ? new OkObjectResult("Usuario registrado exitosamente.")
+                            : new StatusCodeResult(StatusCodes.Status500InternalServerError);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError($"Error al registrar usuario: {ex.Message}");
+                return new StatusCodeResult(StatusCodes.Status500InternalServerError);
             }
         }
     }
