@@ -167,7 +167,68 @@ namespace FunctionAppSmartRead
                         return new OkObjectResult(randomCode);
                     }
 
-              
+                case "validate":
+                    {
+                        // Recibe el parámetro 'accesstoken' para validarlo.
+                        string accessToken = req.Query["accesstoken"];
+                        if (string.IsNullOrWhiteSpace(accessToken))
+                        {
+                            return new BadRequestObjectResult("Debe proporcionar el parámetro 'accesstoken'.");
+                        }
+
+                        bool isValid = IsTokenValid(accessToken);
+                        return new OkObjectResult(isValid);
+                    }
+
+                case "refreshtoken":
+                    {
+                        // Se espera que el cliente envíe el parámetro 'refreshToken' y 'username'.
+                        string refreshToken = req.Query["refreshToken"];
+                        string username = req.Query["username"];
+                        if (string.IsNullOrWhiteSpace(refreshToken))
+                        {
+                            return new BadRequestObjectResult("Debe proporcionar el parámetro 'refreshToken'.");
+                        }
+                        if (string.IsNullOrWhiteSpace(username))
+                        {
+                            return new BadRequestObjectResult("Debe proporcionar el parámetro 'username'.");
+                        }
+
+                        // Validar el refresh token.
+                        if (!IsTokenValid(refreshToken))
+                        {
+                            return new UnauthorizedResult();
+                        }
+
+                        // Extraer el usuario del refresh token para verificar que coincida con el parámetro 'username'.
+                        var tokenHandler = new JwtSecurityTokenHandler();
+                        SecurityToken validatedToken;
+                        var principal = tokenHandler.ValidateToken(refreshToken, new TokenValidationParameters
+                        {
+                            ValidateIssuerSigningKey = true,
+                            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(SecretKey)),
+                            ValidateIssuer = true,
+                            ValidIssuer = "tu-issuer",
+                            ValidateAudience = true,
+                            ValidAudience = "tu-audience",
+                            ClockSkew = TimeSpan.Zero
+                        }, out validatedToken);
+
+                        var tokenUsername = principal.FindFirst(JwtRegisteredClaimNames.Sub)?.Value;
+                        if (tokenUsername != username)
+                        {
+                            return new UnauthorizedResult();
+                        }
+
+                        // Generar nuevos tokens
+                        string newAccessToken = GenerateJwtToken(username);
+                        string newRefreshToken = GenerateRefreshJwtToken(username);
+                        return new OkObjectResult(new
+                        {
+                            AccessToken = newAccessToken,
+                            RefreshToken = newRefreshToken
+                        });
+                    }
 
                 default:
                     return new BadRequestObjectResult("La acción especificada no es válida. Use 'login', 'register', 'sendcode', 'validate' o 'refreshtoken'.");
@@ -190,7 +251,7 @@ namespace FunctionAppSmartRead
 
             var token = new JwtSecurityToken(
                 issuer: "tu-issuer",       
-                audience: "tu-audience",  
+                audience: "tu-audience",   
                 claims: claims,
                 expires: DateTime.UtcNow.AddMinutes(60),
                 signingCredentials: credentials
@@ -214,8 +275,8 @@ namespace FunctionAppSmartRead
             };
 
             var token = new JwtSecurityToken(
-                issuer: "tu-issuer",       
-                audience: "tu-audience",   
+                issuer: "tu-issuer",      
+                audience: "tu-audience",  
                 claims: claims,
                 expires: DateTime.UtcNow.AddDays(7),
                 signingCredentials: credentials
@@ -224,6 +285,35 @@ namespace FunctionAppSmartRead
             return new JwtSecurityTokenHandler().WriteToken(token);
         }
 
+        /// <summary>
+        /// Valida el token (JWT) usando la misma clave secreta y parámetros de validación.
+        /// Retorna true si el token es válido y no ha expirado; de lo contrario, false.
+        /// </summary>
+        private bool IsTokenValid(string token)
+        {
+            var tokenHandler = new JwtSecurityTokenHandler();
+            var key = Encoding.UTF8.GetBytes(SecretKey);
 
+            var validationParameters = new TokenValidationParameters
+            {
+                ValidateIssuerSigningKey = true,
+                IssuerSigningKey = new SymmetricSecurityKey(key),
+                ValidateIssuer = true,
+                ValidIssuer = "tu-issuer",
+                ValidateAudience = true,
+                ValidAudience = "tu-audience",
+                ClockSkew = TimeSpan.Zero
+            };
+
+            try
+            {
+                tokenHandler.ValidateToken(token, validationParameters, out SecurityToken validatedToken);
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
     }
 }
