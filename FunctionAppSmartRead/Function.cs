@@ -10,7 +10,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Extensions.Logging;
 using Microsoft.IdentityModel.Tokens;
-using Microsoft.Data.SqlClient;  // Ojo: Microsoft.Data.SqlClient y System.Data.SqlClient
+using Microsoft.Data.SqlClient;
 
 namespace FunctionAppSmartRead
 {
@@ -18,15 +18,20 @@ namespace FunctionAppSmartRead
     {
         private readonly ILogger<Function> _logger;
         private readonly string _connectionString;
-
-        // Clave secreta para firmar el JWT (NO usar así en producción).
-        private const string SecretKey = "MiLlaveSecretaDeEjemplo1234567890AB";
+        private readonly string SecretKey;
 
         public Function(ILogger<Function> logger)
         {
             _logger = logger;
+
             _connectionString = Environment.GetEnvironmentVariable("conexionSQL")
                 ?? throw new InvalidOperationException("La variable de entorno 'conexionSQL' no está configurada.");
+
+            SecretKey = Environment.GetEnvironmentVariable("SecretKey") 
+                ?? throw new InvalidOperationException("La variable de entorno 'conexionSQL' no está configurada.");
+
+
+
         }
 
         [Function("Function")]
@@ -40,7 +45,7 @@ namespace FunctionAppSmartRead
 
             if (string.IsNullOrWhiteSpace(action))
             {
-                return new BadRequestObjectResult("Debe proporcionar el parámetro 'action' (por ejemplo, 'login', 'register', 'sendcode', 'validate' o 'refreshtoken').");
+                return new BadRequestObjectResult("Debe proporcionar el parámetro 'action' (por ejemplo, 'login', 'register', 'sendcode', 'validatecode', 'validate' o 'refreshtoken').");
             }
 
             switch (action.ToLower())
@@ -161,11 +166,151 @@ namespace FunctionAppSmartRead
 
                 case "sendcode":
                     {
-                        // Genera un número aleatorio de 4 dígitos (entre 1000 y 9999).
-                        Random random = new Random();
-                        int randomCode = random.Next(1000, 10000);
-                        return new OkObjectResult(randomCode);
+                        // Se obtiene el parámetro 'email'
+                        string email = req.Query["email"];
+                        if (string.IsNullOrWhiteSpace(email))
+                        {
+                            return new BadRequestObjectResult("Debe proporcionar el parámetro 'email'.");
+                        }
+
+                        try
+                        {
+                            using (SqlConnection conn = new SqlConnection(_connectionString))
+                            {
+                                await conn.OpenAsync();
+
+                                // 1. Verificar que exista un usuario con ese email y obtener su id_user
+                                string getUserQuery = "SELECT id_user FROM [User] WHERE Email = @Email";
+                                object userIdObj;
+                                using (SqlCommand getUserCmd = new SqlCommand(getUserQuery, conn))
+                                {
+                                    getUserCmd.Parameters.AddWithValue("@Email", email);
+                                    userIdObj = await getUserCmd.ExecuteScalarAsync();
+                                }
+
+                                if (userIdObj == null)
+                                {
+                                    // No se encontró un usuario con el email proporcionado
+                                    return new BadRequestObjectResult("No se encontró un usuario con ese correo electrónico.");
+                                }
+
+                                int userId = Convert.ToInt32(userIdObj);
+
+                                // 2. Generar un número aleatorio de 4 dígitos (entre 1000 y 9999)
+                                Random random = new Random();
+                                int randomCode = random.Next(1000, 10000);
+
+                                // 3. Insertar el token en la tabla 'password_reset_token'
+                                string insertQuery = @"
+                INSERT INTO password_reset_token (id_user, token, created_at, expires_at)
+                VALUES (@id_user, @token, @created_at, @expires_at)";
+
+                                using (SqlCommand insertCmd = new SqlCommand(insertQuery, conn))
+                                {
+                                    insertCmd.Parameters.AddWithValue("@id_user", userId);
+                                    insertCmd.Parameters.AddWithValue("@token", randomCode.ToString());
+                                    insertCmd.Parameters.AddWithValue("@created_at", DateTime.UtcNow);
+                                    insertCmd.Parameters.AddWithValue("@expires_at", DateTime.UtcNow.AddMinutes(15));
+                                    await insertCmd.ExecuteNonQueryAsync();
+                                }
+
+                                // 4. Enviar el correo electrónico con el código
+                                string smtpHost = Environment.GetEnvironmentVariable("SMTP_HOST") ?? "smtp.gmail.com";
+                                string smtpUser = Environment.GetEnvironmentVariable("SMTP_USER") ?? "smartreadteam@gmail.com";
+                                string smtpPass = Environment.GetEnvironmentVariable("SMTP_PASS");
+                                int smtpPort = Convert.ToInt32(Environment.GetEnvironmentVariable("SMTP_PORT") ?? "587");
+
+                                using (var client = new System.Net.Mail.SmtpClient(smtpHost, smtpPort))
+                                {
+                                    client.Credentials = new System.Net.NetworkCredential(smtpUser, smtpPass);
+                                    client.EnableSsl = true;
+
+                                    using (var mailMessage = new System.Net.Mail.MailMessage())
+                                    {
+                                        mailMessage.From = new System.Net.Mail.MailAddress(smtpUser);
+                                        mailMessage.To.Add(email);
+                                        mailMessage.Subject = "Código de recuperación de contraseña";
+                                        mailMessage.Body = $"Tu código de recuperación es: {randomCode}";
+
+                                        await client.SendMailAsync(mailMessage);
+                                    }
+                                }
+
+                                // 5. Retornar mensaje de éxito sin retornar el código generado
+                                return new OkObjectResult("El código se ha enviado correctamente al correo.");
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogError($"Error al procesar la solicitud: {ex.Message}");
+                            return new StatusCodeResult(StatusCodes.Status500InternalServerError);
+                        }
                     }
+
+
+                case "validatecode":
+                    {
+                        // Se reciben los parámetros 'email' y 'resetcode'
+                        string email = req.Query["email"];
+                        string resetCode = req.Query["resetcode"]; 
+                        if (string.IsNullOrWhiteSpace(email) || string.IsNullOrWhiteSpace(resetCode))
+                        {
+                            return new BadRequestObjectResult("Debe proporcionar los parámetros 'email' y 'resetcode'.");
+                        }
+
+                        try
+                        {
+                            using (SqlConnection conn = new SqlConnection(_connectionString))
+                            {
+                                await conn.OpenAsync();
+
+                                // 1. Obtener el id_user asociado al email
+                                string getUserQuery = "SELECT id_user FROM [User] WHERE Email = @Email";
+                                object userIdObj;
+                                using (SqlCommand getUserCmd = new SqlCommand(getUserQuery, conn))
+                                {
+                                    getUserCmd.Parameters.AddWithValue("@Email", email);
+                                    userIdObj = await getUserCmd.ExecuteScalarAsync();
+                                }
+
+                                if (userIdObj == null)
+                                {
+                                    return new OkObjectResult(new { IsValid = false });
+                                }
+
+                                int userId = Convert.ToInt32(userIdObj);
+                                DateTime currentTime = DateTime.UtcNow;
+
+                                // 2. Verificar que exista un token válido para ese usuario y código
+                                string tokenQuery = @"
+                SELECT COUNT(1) 
+                FROM password_reset_token
+                WHERE id_user = @id_user 
+                  AND token = @resetCode 
+                  AND expires_at > @currentTime";
+                                int count = 0;
+                                using (SqlCommand tokenCmd = new SqlCommand(tokenQuery, conn))
+                                {
+                                    tokenCmd.Parameters.AddWithValue("@id_user", userId);
+                                    tokenCmd.Parameters.AddWithValue("@resetCode", resetCode);
+                                    tokenCmd.Parameters.AddWithValue("@currentTime", currentTime);
+                                    object result = await tokenCmd.ExecuteScalarAsync();
+                                    count = (result != null ? Convert.ToInt32(result) : 0);
+                                }
+
+                                _logger.LogInformation($"Verificando token para userId {userId}: resetCode = {resetCode}, currentTime = {currentTime}, count = {count}");
+
+                                bool isValid = count > 0;
+                                return new OkObjectResult(new { IsValid = isValid });
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogError($"Error al validar el código: {ex.Message}");
+                            return new StatusCodeResult(StatusCodes.Status500InternalServerError);
+                        }
+                    }
+
 
                 case "validate":
                     {
@@ -231,7 +376,7 @@ namespace FunctionAppSmartRead
                     }
 
                 default:
-                    return new BadRequestObjectResult("La acción especificada no es válida. Use 'login', 'register', 'sendcode', 'validate' o 'refreshtoken'.");
+                    return new BadRequestObjectResult("La acción especificada no es válida. Use 'login', 'register', 'sendcode', 'validatecode', 'validate' o 'refreshtoken'.");
             }
         }
 
@@ -250,8 +395,8 @@ namespace FunctionAppSmartRead
             };
 
             var token = new JwtSecurityToken(
-                issuer: "tu-issuer",       
-                audience: "tu-audience",   
+                issuer: "tu-issuer",
+                audience: "tu-audience",
                 claims: claims,
                 expires: DateTime.UtcNow.AddMinutes(60),
                 signingCredentials: credentials
@@ -275,8 +420,8 @@ namespace FunctionAppSmartRead
             };
 
             var token = new JwtSecurityToken(
-                issuer: "tu-issuer",      
-                audience: "tu-audience",  
+                issuer: "tu-issuer",
+                audience: "tu-audience",
                 claims: claims,
                 expires: DateTime.UtcNow.AddDays(7),
                 signingCredentials: credentials
