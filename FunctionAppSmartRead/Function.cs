@@ -11,6 +11,7 @@ using Microsoft.Azure.Functions.Worker;
 using Microsoft.Extensions.Logging;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.Data.SqlClient;
+using System.Collections.Generic;
 
 namespace FunctionAppSmartRead
 {
@@ -27,11 +28,8 @@ namespace FunctionAppSmartRead
             _connectionString = Environment.GetEnvironmentVariable("conexionSQL")
                 ?? throw new InvalidOperationException("La variable de entorno 'conexionSQL' no está configurada.");
 
-            SecretKey = Environment.GetEnvironmentVariable("SecretKey") 
+            SecretKey = Environment.GetEnvironmentVariable("SecretKey")
                 ?? throw new InvalidOperationException("La variable de entorno 'conexionSQL' no está configurada.");
-
-
-
         }
 
         [Function("Function")]
@@ -45,7 +43,7 @@ namespace FunctionAppSmartRead
 
             if (string.IsNullOrWhiteSpace(action))
             {
-                return new BadRequestObjectResult("Debe proporcionar el parámetro 'action' (por ejemplo, 'login', 'register', 'sendcode', 'validatecode', 'validate' o 'refreshtoken').");
+                return new BadRequestObjectResult("Debe proporcionar el parámetro 'action' (por ejemplo, 'login', 'register', 'sendcode', 'validatecode', 'validate', 'refreshtoken' o 'getcategories').");
             }
 
             switch (action.ToLower())
@@ -202,8 +200,8 @@ namespace FunctionAppSmartRead
 
                                 // 3. Insertar el token en la tabla 'password_reset_token'
                                 string insertQuery = @"
-                INSERT INTO password_reset_token (id_user, token, created_at, expires_at)
-                VALUES (@id_user, @token, @created_at, @expires_at)";
+                                    INSERT INTO password_reset_token (id_user, token, created_at, expires_at)
+                                    VALUES (@id_user, @token, @created_at, @expires_at)";
 
                                 using (SqlCommand insertCmd = new SqlCommand(insertQuery, conn))
                                 {
@@ -247,12 +245,11 @@ namespace FunctionAppSmartRead
                         }
                     }
 
-
                 case "validatecode":
                     {
                         // Se reciben los parámetros 'email' y 'resetcode'
                         string email = req.Query["email"];
-                        string resetCode = req.Query["resetcode"]; 
+                        string resetCode = req.Query["resetcode"];
                         if (string.IsNullOrWhiteSpace(email) || string.IsNullOrWhiteSpace(resetCode))
                         {
                             return new BadRequestObjectResult("Debe proporcionar los parámetros 'email' y 'resetcode'.");
@@ -283,11 +280,11 @@ namespace FunctionAppSmartRead
 
                                 // 2. Verificar que exista un token válido para ese usuario y código
                                 string tokenQuery = @"
-                SELECT COUNT(1) 
-                FROM password_reset_token
-                WHERE id_user = @id_user 
-                  AND token = @resetCode 
-                  AND expires_at > @currentTime";
+                                    SELECT COUNT(1) 
+                                    FROM password_reset_token
+                                    WHERE id_user = @id_user 
+                                    AND token = @resetCode 
+                                    AND expires_at > @currentTime";
                                 int count = 0;
                                 using (SqlCommand tokenCmd = new SqlCommand(tokenQuery, conn))
                                 {
@@ -310,7 +307,6 @@ namespace FunctionAppSmartRead
                             return new StatusCodeResult(StatusCodes.Status500InternalServerError);
                         }
                     }
-
 
                 case "validate":
                     {
@@ -375,8 +371,59 @@ namespace FunctionAppSmartRead
                         });
                     }
 
+                                                                                                                                                                                                                                                                                                                                           
+                case "getcategories":
+                    {
+                        // Se valida que se envíe el access token
+                        string accessToken = req.Query["accesstoken"];
+                        if (string.IsNullOrWhiteSpace(accessToken))
+                        {
+                            return new BadRequestObjectResult("Debe proporcionar el parámetro 'accesstoken'.");
+                        }
+
+                        // Se valida que el token sea correcto y no haya expirado
+                        if (!IsTokenValid(accessToken))
+                        {
+                            return new UnauthorizedResult();
+                        }
+
+                        try
+                        {
+                            using (SqlConnection conn = new SqlConnection(_connectionString))
+                            {
+                                await conn.OpenAsync();
+
+                                // Consulta para obtener la lista de categorías
+                                string query = "SELECT id_category, name FROM category";
+                                var categories = new List<object>();
+
+                                using (SqlCommand cmd = new SqlCommand(query, conn))
+                                using (SqlDataReader reader = await cmd.ExecuteReaderAsync())
+                                {
+                                    while (await reader.ReadAsync())
+                                    {
+                                        categories.Add(new
+                                        {
+                                            IdCategory = reader.GetInt32(0),
+                                            Name = reader.GetString(1)
+                                        });
+                                    }
+                                }
+
+                                // Retornar la lista de categorías en formato JSON
+                                return new OkObjectResult(categories);
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogError($"Error al obtener la lista de categorías: {ex.Message}");
+                            return new StatusCodeResult(StatusCodes.Status500InternalServerError);
+                        }
+                    }
+
+
                 default:
-                    return new BadRequestObjectResult("La acción especificada no es válida. Use 'login', 'register', 'sendcode', 'validatecode', 'validate' o 'refreshtoken'.");
+                    return new BadRequestObjectResult("La acción especificada no es válida. Use 'login', 'register', 'sendcode', 'validatecode', 'validate', 'refreshtoken' o 'getcategories'.");
             }
         }
 
