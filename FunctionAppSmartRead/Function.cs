@@ -29,7 +29,7 @@ namespace FunctionAppSmartRead
                 ?? throw new InvalidOperationException("La variable de entorno 'conexionSQL' no está configurada.");
 
             SecretKey = Environment.GetEnvironmentVariable("SecretKey")
-                ?? throw new InvalidOperationException("La variable de entorno 'conexionSQL' no está configurada.");
+                ?? throw new InvalidOperationException("La variable de entorno 'SecretKey' no está configurada.");
         }
 
         [Function("Function")]
@@ -43,7 +43,7 @@ namespace FunctionAppSmartRead
 
             if (string.IsNullOrWhiteSpace(action))
             {
-                return new BadRequestObjectResult("Debe proporcionar el parámetro 'action' (por ejemplo, 'login', 'register', 'sendcode', 'validatecode', 'validate', 'refreshtoken' o 'getcategories').");
+                return new BadRequestObjectResult("Debe proporcionar el parámetro 'action' (por ejemplo, 'login', 'register', 'sendcode', 'validatecode', 'validate', 'refreshtoken', 'getcategories' o 'getmorebooks').");
             }
 
             switch (action.ToLower())
@@ -371,7 +371,6 @@ namespace FunctionAppSmartRead
                         });
                     }
 
-                                                                                                                                                                                                                                                                                                                                           
                 case "getcategories":
                     {
                         // Se valida que se envíe el access token
@@ -421,9 +420,104 @@ namespace FunctionAppSmartRead
                         }
                     }
 
+                // Nueva acción: Obtener más libros por categoría (getmorebooks)
+                case "getbooksbycategory":
+                    {
+                        // Validar que se reciba el parámetro 'accesstoken'.
+                        string accessToken = req.Query["accesstoken"];
+                        if (string.IsNullOrWhiteSpace(accessToken))
+                        {
+                            return new BadRequestObjectResult("Debe proporcionar el parámetro 'accesstoken'.");
+                        }
+
+                        // Validar que el token sea correcto.
+                        if (!IsTokenValid(accessToken))
+                        {
+                            return new UnauthorizedResult();
+                        }
+
+                        // Validar que se reciba el 'categoryId' y que éste sea un número entero válido.
+                        string categoryIdStr = req.Query["categoryId"];
+                        if (string.IsNullOrWhiteSpace(categoryIdStr) || !int.TryParse(categoryIdStr, out int categoryId))
+                        {
+                            return new BadRequestObjectResult("Debe proporcionar un 'categoryId' válido.");
+                        }
+
+                        // Obtener parámetros de paginación: offset y limit.
+                        int offset = 0;
+                        int limit = 10; // Valor por defecto
+                        string offsetStr = req.Query["offset"];
+                        string limitStr = req.Query["limit"];
+
+                        if (!string.IsNullOrWhiteSpace(offsetStr) && !int.TryParse(offsetStr, out offset))
+                        {
+                            return new BadRequestObjectResult("El parámetro 'offset' debe ser un número entero válido.");
+                        }
+                        if (!string.IsNullOrWhiteSpace(limitStr) && !int.TryParse(limitStr, out limit))
+                        {
+                            return new BadRequestObjectResult("El parámetro 'limit' debe ser un número entero válido.");
+                        }
+
+                        try
+                        {
+                            using (SqlConnection conn = new SqlConnection(_connectionString))
+                            {
+                                await conn.OpenAsync();
+
+                                // Consulta para obtener los libros asociados a la categoría con paginación.
+                                // Se utilizan OFFSET y FETCH NEXT para limitar los resultados.
+                                string query = @"
+                SELECT b.id_book, b.title, b.published_date, b.author, b.file_path, b.description
+                FROM book b
+                INNER JOIN book_category bc ON b.id_book = bc.id_book
+                WHERE bc.id_category = @categoryId
+                ORDER BY b.id_book
+                OFFSET @offset ROWS FETCH NEXT @limit ROWS ONLY";
+
+                                var books = new List<object>();
+                                using (SqlCommand cmd = new SqlCommand(query, conn))
+                                {
+                                    cmd.Parameters.AddWithValue("@categoryId", categoryId);
+                                    cmd.Parameters.AddWithValue("@offset", offset);
+                                    cmd.Parameters.AddWithValue("@limit", limit);
+
+                                    using (SqlDataReader reader = await cmd.ExecuteReaderAsync())
+                                    {
+                                        while (await reader.ReadAsync())
+                                        {
+                                            int idBook = reader.GetInt32(0);
+                                            string title = reader.GetString(1);
+                                            DateTime? publishedDate = reader.IsDBNull(2) ? (DateTime?)null : reader.GetDateTime(2);
+                                            string author = reader.GetString(3);
+                                            string filePath = reader.GetString(4);
+                                            string description = reader.GetString(5);
+
+                                            books.Add(new
+                                            {
+                                                IdBook = idBook,
+                                                Title = title,
+                                                PublishedDate = publishedDate,
+                                                Author = author,
+                                                FilePath = filePath,
+                                                Description = description
+                                            });
+                                        }
+                                    }
+                                }
+                                // Retorna la lista de libros en formato JSON.
+                                return new OkObjectResult(books);
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogError($"Error al obtener libros para la categoría {categoryId}: {ex.Message}");
+                            return new StatusCodeResult(StatusCodes.Status500InternalServerError);
+                        }
+                    }
+
 
                 default:
-                    return new BadRequestObjectResult("La acción especificada no es válida. Use 'login', 'register', 'sendcode', 'validatecode', 'validate', 'refreshtoken' o 'getcategories'.");
+                    return new BadRequestObjectResult("La acción especificada no es válida. Use 'login', 'register', 'sendcode', 'validatecode', 'validate', 'refreshtoken', 'getcategories' o 'getmorebooks'.");
             }
         }
 
