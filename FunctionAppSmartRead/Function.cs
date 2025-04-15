@@ -278,7 +278,7 @@ namespace FunctionAppSmartRead
                                 int userId = Convert.ToInt32(userIdObj);
                                 DateTime currentTime = DateTime.UtcNow;
 
-                                // 2. Verificar que exista un token válido para ese usuario y código
+                                // 2. Verificar que exista un token válido para ese usuario y código          
                                 string tokenQuery = @"
                                     SELECT COUNT(1) 
                                     FROM password_reset_token
@@ -490,7 +490,8 @@ namespace FunctionAppSmartRead
                                             DateTime? publishedDate = reader.IsDBNull(2) ? (DateTime?)null : reader.GetDateTime(2);
                                             string author = reader.GetString(3);
                                             string filePath = reader.GetString(4);
-                                            string description = reader.GetString(5);
+                                            // Aquí se maneja el caso en que la descripción es nula.
+                                            string description = reader.IsDBNull(5) ? "" : reader.GetString(5);
 
                                             books.Add(new
                                             {
@@ -514,6 +515,7 @@ namespace FunctionAppSmartRead
                             return new StatusCodeResult(StatusCodes.Status500InternalServerError);
                         }
                     }
+
 
 
                 default:
