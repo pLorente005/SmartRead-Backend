@@ -516,6 +516,65 @@ namespace FunctionAppSmartRead
                         }
                     }
 
+                case "getrecentbooks":
+                    {
+                        try
+                        {
+                            using (SqlConnection conn = new SqlConnection(_connectionString))
+                            {
+                                await conn.OpenAsync();
+
+                                // Trae los 10 libros con fecha de publicación más reciente
+                                string query = @"
+                                    SELECT TOP 10 
+                                        b.id_book, 
+                                        b.title, 
+                                        b.published_date, 
+                                        b.author, 
+                                        b.file_path, 
+                                        b.description
+                                    FROM dbo.book b
+                                    ORDER BY b.published_date DESC";
+
+                                var books = new List<object>();
+                                using (SqlCommand cmd = new SqlCommand(query, conn))
+                                using (SqlDataReader reader = await cmd.ExecuteReaderAsync())
+                                {
+                                    while (await reader.ReadAsync())
+                                    {
+                                        int idBook = reader.GetInt32(0);
+                                        string title = reader.GetString(1);
+                                        DateTime? publishedDate = reader.IsDBNull(2)
+                                            ? (DateTime?)null
+                                            : reader.GetDateTime(2);
+                                        string author = reader.GetString(3);
+                                        string filePath = reader.GetString(4);
+                                        string description = reader.IsDBNull(5)
+                                            ? ""
+                                            : reader.GetString(5);
+
+                                        books.Add(new
+                                        {
+                                            IdBook = idBook,
+                                            Title = title,
+                                            PublishedDate = publishedDate,
+                                            Author = author,
+                                            FilePath = filePath,
+                                            Description = description
+                                        });
+                                    }
+                                }
+
+                                return new OkObjectResult(books);
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogError($"Error al obtener libros recientes: {ex.Message}");
+                            return new StatusCodeResult(StatusCodes.Status500InternalServerError);
+                        }
+                    }
+
 
 
                 default:
