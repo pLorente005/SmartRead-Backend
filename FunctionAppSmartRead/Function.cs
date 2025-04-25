@@ -574,7 +574,173 @@ namespace FunctionAppSmartRead
                             return new StatusCodeResult(StatusCodes.Status500InternalServerError);
                         }
                     }
+                case "addreview":
+                    {
+                        // 1) Validar que se reciba el parámetro 'accesstoken'.
+                        string accessToken = req.Query["accesstoken"];
+                        if (string.IsNullOrWhiteSpace(accessToken))
+                            return new BadRequestObjectResult("Debe proporcionar el parámetro 'accesstoken'.");
 
+                        // 2) Validar que el token sea correcto.
+                        if (!IsTokenValid(accessToken))
+                            return new UnauthorizedResult();
+
+                        // 3) Extraer el username desde el token
+                        string username = GetUsernameFromToken(accessToken);
+                        if (username == null)
+                        {
+                            _logger.LogWarning("Access token válido pero sin claim de usuario.");
+                            return new UnauthorizedResult();
+                        }
+                        _logger.LogInformation($"Usuario extraído: {username}");
+
+                        // 4) Leer y validar parámetros de la petición
+                        if (!int.TryParse(req.Query["bookId"], out int bookId))
+                            return new BadRequestObjectResult("Parámetro 'bookId' inválido o ausente.");
+                        if (!int.TryParse(req.Query["rating"], out int rating) || rating < 1 || rating > 5)
+                            return new BadRequestObjectResult("Parámetro 'rating' inválido. Debe ser un número entre 1 y 5.");
+                        string comment = req.Query["comment"];
+
+                        try
+                        {
+                            using (SqlConnection conn = new SqlConnection(_connectionString))
+                            {
+                                await conn.OpenAsync();
+
+                                // 5) Obtener id_user a partir del username
+                                int userId;
+                                using (var cmdUser = new SqlCommand(
+                                    "SELECT id_user FROM [User] WHERE Username = @username", conn))
+                                {
+                                    cmdUser.Parameters.AddWithValue("@username", username);
+                                    object res = await cmdUser.ExecuteScalarAsync();
+                                    if (res == null)
+                                        return new BadRequestObjectResult("Usuario no encontrado.");
+                                    userId = Convert.ToInt32(res);
+                                }
+
+                                // 6) Comprobar si ya existe una review para este user+book
+                                const string checkReviewSql = @"
+                                    SELECT COUNT(1)
+                                    FROM dbo.review
+                                    WHERE id_user = @id_user
+                                      AND id_book = @id_book";
+                                int reviewCount;
+                                using (var cmdCheckReview = new SqlCommand(checkReviewSql, conn))
+                                {
+                                    cmdCheckReview.Parameters.AddWithValue("@id_user", userId);
+                                    cmdCheckReview.Parameters.AddWithValue("@id_book", bookId);
+                                    reviewCount = Convert.ToInt32(await cmdCheckReview.ExecuteScalarAsync());
+                                }
+
+                                if (reviewCount > 0)
+                                {
+                                    // 7a) Si ya tenía review, la actualizamos
+                                    const string updateReviewSql = @"
+                                        UPDATE dbo.review
+                                        SET rating = @rating,
+                                            comment = @comment,
+                                            review_date = SYSDATETIME()
+                                        WHERE id_user = @id_user
+                                          AND id_book = @id_book";
+                                    using (var cmdUpdate = new SqlCommand(updateReviewSql, conn))
+                                    {
+                                        cmdUpdate.Parameters.AddWithValue("@id_user", userId);
+                                        cmdUpdate.Parameters.AddWithValue("@id_book", bookId);
+                                        cmdUpdate.Parameters.AddWithValue("@rating", rating);
+                                        cmdUpdate.Parameters.AddWithValue("@comment", comment ?? string.Empty);
+                                        await cmdUpdate.ExecuteNonQueryAsync();
+                                    }
+                                }
+                                else
+                                {
+                                    // 7b) Si no existía, insertamos nueva review
+                                    const string insertReviewSql = @"
+                                        INSERT INTO dbo.review (
+                                            id_user,
+                                            id_book,
+                                            rating,
+                                            comment,
+                                            review_date
+                                        ) VALUES (
+                                            @id_user,
+                                            @id_book,
+                                            @rating,
+                                            @comment,
+                                            SYSDATETIME()
+                                        )";
+                                    using (var cmdReview = new SqlCommand(insertReviewSql, conn))
+                                    {
+                                        cmdReview.Parameters.AddWithValue("@id_user", userId);
+                                        cmdReview.Parameters.AddWithValue("@id_book", bookId);
+                                        cmdReview.Parameters.AddWithValue("@rating", rating);
+                                        cmdReview.Parameters.AddWithValue("@comment", comment ?? string.Empty);
+                                        await cmdReview.ExecuteNonQueryAsync();
+                                    }
+                                }
+
+                                // 8) Gestionar favorites según valoración
+                                //    Umbral: rating >= 3 ? favorito; rating < 3 ? eliminar de favoritos.
+                                if (rating >= 3)
+                                {
+                                    // Añadir a favorites si no existe
+                                    const string checkFavSql = @"
+                                        SELECT COUNT(1)
+                                        FROM dbo.favorites
+                                        WHERE id_user = @id_user
+                                          AND id_book = @id_book";
+                                    int favCount;
+                                    using (var cmdCheckFav = new SqlCommand(checkFavSql, conn))
+                                    {
+                                        cmdCheckFav.Parameters.AddWithValue("@id_user", userId);
+                                        cmdCheckFav.Parameters.AddWithValue("@id_book", bookId);
+                                        favCount = Convert.ToInt32(await cmdCheckFav.ExecuteScalarAsync());
+                                    }
+
+                                    if (favCount == 0)
+                                    {
+                                        const string insertFavSql = @"
+                                            INSERT INTO dbo.favorites (
+                                                id_user,
+                                                id_book,
+                                                created_at
+                                            ) VALUES (
+                                                @id_user,
+                                                @id_book,
+                                                SYSDATETIME()
+                                            )";
+                                        using (var cmdFav = new SqlCommand(insertFavSql, conn))
+                                        {
+                                            cmdFav.Parameters.AddWithValue("@id_user", userId);
+                                            cmdFav.Parameters.AddWithValue("@id_book", bookId);
+                                            await cmdFav.ExecuteNonQueryAsync();
+                                        }
+                                    }
+                                }
+                                else
+                                {
+                                    // Quitar de favorites si existía
+                                    const string deleteFavSql = @"
+                                        DELETE FROM dbo.favorites
+                                        WHERE id_user = @id_user
+                                          AND id_book = @id_book";
+                                    using (var cmdDelFav = new SqlCommand(deleteFavSql, conn))
+                                    {
+                                        cmdDelFav.Parameters.AddWithValue("@id_user", userId);
+                                        cmdDelFav.Parameters.AddWithValue("@id_book", bookId);
+                                        await cmdDelFav.ExecuteNonQueryAsync();
+                                    }
+                                }
+                            }
+
+                            return new OkObjectResult("Valoración procesada correctamente.");
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogError($"Error al insertar/actualizar valoración o favoritos: {ex.Message}");
+                            return new StatusCodeResult(StatusCodes.Status500InternalServerError);
+                        }
+                    }
 
 
                 default:
@@ -660,6 +826,42 @@ namespace FunctionAppSmartRead
             catch
             {
                 return false;
+            }
+        }
+
+        private string GetUsernameFromToken(string token)
+        {
+            var tokenHandler = new JwtSecurityTokenHandler();
+            var key = Encoding.UTF8.GetBytes(SecretKey);
+
+            var validationParameters = new TokenValidationParameters
+            {
+                ValidateIssuerSigningKey = true,
+                IssuerSigningKey = new SymmetricSecurityKey(key),
+                ValidateIssuer = true,
+                ValidIssuer = "tu-issuer",
+                ValidateAudience = true,
+                ValidAudience = "tu-audience",
+                ClockSkew = TimeSpan.Zero
+            };
+
+            try
+            {
+                // 1) Validar el token y obtener el ClaimsPrincipal
+                var principal = tokenHandler.ValidateToken(token, validationParameters, out SecurityToken validatedToken);
+
+                // 2) Intentar extraer el username de distintos claims
+                string username = principal.FindFirst(ClaimTypes.NameIdentifier)?.Value
+                               ?? principal.FindFirst(JwtRegisteredClaimNames.Sub)?.Value
+                               ?? principal.FindFirst(JwtRegisteredClaimNames.UniqueName)?.Value
+                               ?? principal.FindFirst(ClaimTypes.Name)?.Value;
+
+                return string.IsNullOrEmpty(username) ? null : username;
+            }
+            catch
+            {
+                // Token inválido o expirado
+                return null;
             }
         }
     }
