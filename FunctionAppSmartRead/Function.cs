@@ -1,4 +1,4 @@
-using System;
+Ôªøusing System;
 using System.Data.SqlClient;
 using System.IO;
 using System.Threading.Tasks;
@@ -26,24 +26,24 @@ namespace FunctionAppSmartRead
             _logger = logger;
 
             _connectionString = Environment.GetEnvironmentVariable("conexionSQL")
-                ?? throw new InvalidOperationException("La variable de entorno 'conexionSQL' no est· configurada.");
+                ?? throw new InvalidOperationException("La variable de entorno 'conexionSQL' no est√° configurada.");
 
             SecretKey = Environment.GetEnvironmentVariable("SecretKey")
-                ?? throw new InvalidOperationException("La variable de entorno 'SecretKey' no est· configurada.");
+                ?? throw new InvalidOperationException("La variable de entorno 'SecretKey' no est√° configurada.");
         }
 
         [Function("Function")]
         public async Task<IActionResult> Run(
             [HttpTrigger(AuthorizationLevel.Function, "get", "post")] HttpRequest req)
         {
-            _logger.LogInformation("FunciÛn combinada ejecutada.");
+            _logger.LogInformation("Funci√≥n combinada ejecutada.");
 
-            // Se obtiene el par·metro 'action' para determinar la operaciÛn.
+            // Se obtiene el par√°metro 'action' para determinar la operaci√≥n.
             string action = req.Query["action"];
 
             if (string.IsNullOrWhiteSpace(action))
             {
-                return new BadRequestObjectResult("Debe proporcionar el par·metro 'action' (por ejemplo, 'login', 'register', 'sendcode', 'validatecode', 'validate', 'refreshtoken', 'getcategories' o 'getmorebooks').");
+                return new BadRequestObjectResult("Debe proporcionar el par√°metro 'action' (por ejemplo, 'login', 'register', 'sendcode', 'validatecode', 'validate', 'refreshtoken', 'getcategories' o 'getmorebooks').");
             }
 
             switch (action.ToLower())
@@ -51,13 +51,13 @@ namespace FunctionAppSmartRead
                 case "login":
                 case "auth":
                     {
-                        // LÛgica de autenticaciÛn
+                        // L√≥gica de autenticaci√≥n
                         string username = req.Query["username"];
                         string password = req.Query["password"];
 
                         if (string.IsNullOrWhiteSpace(username) || string.IsNullOrWhiteSpace(password))
                         {
-                            return new BadRequestObjectResult("Para autenticaciÛn, debe proporcionar 'username' y 'password'.");
+                            return new BadRequestObjectResult("Para autenticaci√≥n, debe proporcionar 'username' y 'password'.");
                         }
 
                         try
@@ -80,7 +80,7 @@ namespace FunctionAppSmartRead
 
                                 if (userCount > 0)
                                 {
-                                    // Generar Access Token (JWT) y Refresh Token (JWT) con expiraciÛn extendida.
+                                    // Generar Access Token (JWT) y Refresh Token (JWT) con expiraci√≥n extendida.
                                     string accessToken = GenerateJwtToken(username);
                                     string refreshToken = GenerateRefreshJwtToken(username);
 
@@ -93,7 +93,7 @@ namespace FunctionAppSmartRead
                                 }
                                 else
                                 {
-                                    // Usuario o contraseÒa inv·lidos.
+                                    // Usuario o contrase√±a inv√°lidos.
                                     return new UnauthorizedResult();
                                 }
                             }
@@ -107,7 +107,7 @@ namespace FunctionAppSmartRead
 
                 case "register":
                     {
-                        // LÛgica de registro
+                        // L√≥gica de registro
                         string username = req.Query["username"];
                         string password = req.Query["password"];
                         string email = req.Query["email"];
@@ -164,11 +164,11 @@ namespace FunctionAppSmartRead
 
                 case "sendcode":
                     {
-                        // Se obtiene el par·metro 'email'
+                        // Se obtiene el par√°metro 'email'
                         string email = req.Query["email"];
                         if (string.IsNullOrWhiteSpace(email))
                         {
-                            return new BadRequestObjectResult("Debe proporcionar el par·metro 'email'.");
+                            return new BadRequestObjectResult("Debe proporcionar el par√°metro 'email'.");
                         }
 
                         try
@@ -188,13 +188,13 @@ namespace FunctionAppSmartRead
 
                                 if (userIdObj == null)
                                 {
-                                    // No se encontrÛ un usuario con el email proporcionado
-                                    return new BadRequestObjectResult("No se encontrÛ un usuario con ese correo electrÛnico.");
+                                    // No se encontr√≥ un usuario con el email proporcionado
+                                    return new BadRequestObjectResult("No se encontr√≥ un usuario con ese correo electr√≥nico.");
                                 }
 
                                 int userId = Convert.ToInt32(userIdObj);
 
-                                // 2. Generar un n˙mero aleatorio de 4 dÌgitos (entre 1000 y 9999)
+                                // 2. Generar un n√∫mero aleatorio de 4 d√≠gitos (entre 1000 y 9999)
                                 Random random = new Random();
                                 int randomCode = random.Next(1000, 10000);
 
@@ -212,7 +212,7 @@ namespace FunctionAppSmartRead
                                     await insertCmd.ExecuteNonQueryAsync();
                                 }
 
-                                // 4. Enviar el correo electrÛnico con el cÛdigo
+                                // 4. Enviar el correo electr√≥nico con el c√≥digo
                                 string smtpHost = Environment.GetEnvironmentVariable("SMTP_HOST") ?? "smtp.gmail.com";
                                 string smtpUser = Environment.GetEnvironmentVariable("SMTP_USER") ?? "smartreadteam@gmail.com";
                                 string smtpPass = Environment.GetEnvironmentVariable("SMTP_PASS");
@@ -227,15 +227,15 @@ namespace FunctionAppSmartRead
                                     {
                                         mailMessage.From = new System.Net.Mail.MailAddress(smtpUser);
                                         mailMessage.To.Add(email);
-                                        mailMessage.Subject = "CÛdigo de recuperaciÛn de contraseÒa";
-                                        mailMessage.Body = $"Tu cÛdigo de recuperaciÛn es: {randomCode}";
+                                        mailMessage.Subject = "C√≥digo de recuperaci√≥n de contrase√±a";
+                                        mailMessage.Body = $"Tu c√≥digo de recuperaci√≥n es: {randomCode}";
 
                                         await client.SendMailAsync(mailMessage);
                                     }
                                 }
 
-                                // 5. Retornar mensaje de Èxito sin retornar el cÛdigo generado
-                                return new OkObjectResult("El cÛdigo se ha enviado correctamente al correo.");
+                                // 5. Retornar mensaje de √©xito sin retornar el c√≥digo generado
+                                return new OkObjectResult("El c√≥digo se ha enviado correctamente al correo.");
                             }
                         }
                         catch (Exception ex)
@@ -247,12 +247,12 @@ namespace FunctionAppSmartRead
 
                 case "validatecode":
                     {
-                        // Se reciben los par·metros 'email' y 'resetcode'
+                        // Se reciben los par√°metros 'email' y 'resetcode'
                         string email = req.Query["email"];
                         string resetCode = req.Query["resetcode"];
                         if (string.IsNullOrWhiteSpace(email) || string.IsNullOrWhiteSpace(resetCode))
                         {
-                            return new BadRequestObjectResult("Debe proporcionar los par·metros 'email' y 'resetcode'.");
+                            return new BadRequestObjectResult("Debe proporcionar los par√°metros 'email' y 'resetcode'.");
                         }
 
                         try
@@ -278,7 +278,7 @@ namespace FunctionAppSmartRead
                                 int userId = Convert.ToInt32(userIdObj);
                                 DateTime currentTime = DateTime.UtcNow;
 
-                                // 2. Verificar que exista un token v·lido para ese usuario y cÛdigo          
+                                // 2. Verificar que exista un token v√°lido para ese usuario y c√≥digo          
                                 string tokenQuery = @"
                                     SELECT COUNT(1) 
                                     FROM password_reset_token
@@ -303,18 +303,18 @@ namespace FunctionAppSmartRead
                         }
                         catch (Exception ex)
                         {
-                            _logger.LogError($"Error al validar el cÛdigo: {ex.Message}");
+                            _logger.LogError($"Error al validar el c√≥digo: {ex.Message}");
                             return new StatusCodeResult(StatusCodes.Status500InternalServerError);
                         }
                     }
 
                 case "validate":
                     {
-                        // Recibe el par·metro 'accesstoken' para validarlo.
+                        // Recibe el par√°metro 'accesstoken' para validarlo.
                         string accessToken = req.Query["accesstoken"];
                         if (string.IsNullOrWhiteSpace(accessToken))
                         {
-                            return new BadRequestObjectResult("Debe proporcionar el par·metro 'accesstoken'.");
+                            return new BadRequestObjectResult("Debe proporcionar el par√°metro 'accesstoken'.");
                         }
 
                         bool isValid = IsTokenValid(accessToken);
@@ -323,16 +323,16 @@ namespace FunctionAppSmartRead
 
                 case "refreshtoken":
                     {
-                        // Se espera que el cliente envÌe el par·metro 'refreshToken' y 'username'.
+                        // Se espera que el cliente env√≠e el par√°metro 'refreshToken' y 'username'.
                         string refreshToken = req.Query["refreshToken"];
                         string username = req.Query["username"];
                         if (string.IsNullOrWhiteSpace(refreshToken))
                         {
-                            return new BadRequestObjectResult("Debe proporcionar el par·metro 'refreshToken'.");
+                            return new BadRequestObjectResult("Debe proporcionar el par√°metro 'refreshToken'.");
                         }
                         if (string.IsNullOrWhiteSpace(username))
                         {
-                            return new BadRequestObjectResult("Debe proporcionar el par·metro 'username'.");
+                            return new BadRequestObjectResult("Debe proporcionar el par√°metro 'username'.");
                         }
 
                         // Validar el refresh token.
@@ -341,7 +341,7 @@ namespace FunctionAppSmartRead
                             return new UnauthorizedResult();
                         }
 
-                        // Extraer el usuario del refresh token para verificar que coincida con el par·metro 'username'.
+                        // Extraer el usuario del refresh token para verificar que coincida con el par√°metro 'username'.
                         var tokenHandler = new JwtSecurityTokenHandler();
                         SecurityToken validatedToken;
                         var principal = tokenHandler.ValidateToken(refreshToken, new TokenValidationParameters
@@ -373,11 +373,11 @@ namespace FunctionAppSmartRead
 
                 case "getcategories":
                     {
-                        // Se valida que se envÌe el access token
+                        // Se valida que se env√≠e el access token
                         string accessToken = req.Query["accesstoken"];
                         if (string.IsNullOrWhiteSpace(accessToken))
                         {
-                            return new BadRequestObjectResult("Debe proporcionar el par·metro 'accesstoken'.");
+                            return new BadRequestObjectResult("Debe proporcionar el par√°metro 'accesstoken'.");
                         }
 
                         // Se valida que el token sea correcto y no haya expirado
@@ -392,7 +392,7 @@ namespace FunctionAppSmartRead
                             {
                                 await conn.OpenAsync();
 
-                                // Consulta para obtener la lista de categorÌas
+                                // Consulta para obtener la lista de categor√≠as
                                 string query = "SELECT id_category, name FROM category";
                                 var categories = new List<object>();
 
@@ -409,25 +409,25 @@ namespace FunctionAppSmartRead
                                     }
                                 }
 
-                                // Retornar la lista de categorÌas en formato JSON
+                                // Retornar la lista de categor√≠as en formato JSON
                                 return new OkObjectResult(categories);
                             }
                         }
                         catch (Exception ex)
                         {
-                            _logger.LogError($"Error al obtener la lista de categorÌas: {ex.Message}");
+                            _logger.LogError($"Error al obtener la lista de categor√≠as: {ex.Message}");
                             return new StatusCodeResult(StatusCodes.Status500InternalServerError);
                         }
                     }
 
-                // Nueva acciÛn: Obtener m·s libros por categorÌa (getmorebooks)
+                // Nueva acci√≥n: Obtener m√°s libros por categor√≠a (getmorebooks)
                 case "getbooksbycategory":
                     {
-                        // Validar que se reciba el par·metro 'accesstoken'.
+                        // Validar que se reciba el par√°metro 'accesstoken'.
                         string accessToken = req.Query["accesstoken"];
                         if (string.IsNullOrWhiteSpace(accessToken))
                         {
-                            return new BadRequestObjectResult("Debe proporcionar el par·metro 'accesstoken'.");
+                            return new BadRequestObjectResult("Debe proporcionar el par√°metro 'accesstoken'.");
                         }
 
                         // Validar que el token sea correcto.
@@ -436,14 +436,14 @@ namespace FunctionAppSmartRead
                             return new UnauthorizedResult();
                         }
 
-                        // Validar que se reciba el 'categoryId' y que Èste sea un n˙mero entero v·lido.
+                        // Validar que se reciba el 'categoryId' y que √©ste sea un n√∫mero entero v√°lido.
                         string categoryIdStr = req.Query["categoryId"];
                         if (string.IsNullOrWhiteSpace(categoryIdStr) || !int.TryParse(categoryIdStr, out int categoryId))
                         {
-                            return new BadRequestObjectResult("Debe proporcionar un 'categoryId' v·lido.");
+                            return new BadRequestObjectResult("Debe proporcionar un 'categoryId' v√°lido.");
                         }
 
-                        // Obtener par·metros de paginaciÛn: offset y limit.
+                        // Obtener par√°metros de paginaci√≥n: offset y limit.
                         int offset = 0;
                         int limit = 10; // Valor por defecto
                         string offsetStr = req.Query["offset"];
@@ -451,11 +451,11 @@ namespace FunctionAppSmartRead
 
                         if (!string.IsNullOrWhiteSpace(offsetStr) && !int.TryParse(offsetStr, out offset))
                         {
-                            return new BadRequestObjectResult("El par·metro 'offset' debe ser un n˙mero entero v·lido.");
+                            return new BadRequestObjectResult("El par√°metro 'offset' debe ser un n√∫mero entero v√°lido.");
                         }
                         if (!string.IsNullOrWhiteSpace(limitStr) && !int.TryParse(limitStr, out limit))
                         {
-                            return new BadRequestObjectResult("El par·metro 'limit' debe ser un n˙mero entero v·lido.");
+                            return new BadRequestObjectResult("El par√°metro 'limit' debe ser un n√∫mero entero v√°lido.");
                         }
 
                         try
@@ -464,7 +464,7 @@ namespace FunctionAppSmartRead
                             {
                                 await conn.OpenAsync();
 
-                                // Consulta para obtener los libros asociados a la categorÌa con paginaciÛn.
+                                // Consulta para obtener los libros asociados a la categor√≠a con paginaci√≥n.
                                 // Se utilizan OFFSET y FETCH NEXT para limitar los resultados.
                                 string query = @"
                 SELECT b.id_book, b.title, b.published_date, b.author, b.file_path, b.description
@@ -490,7 +490,7 @@ namespace FunctionAppSmartRead
                                             DateTime? publishedDate = reader.IsDBNull(2) ? (DateTime?)null : reader.GetDateTime(2);
                                             string author = reader.GetString(3);
                                             string filePath = reader.GetString(4);
-                                            // AquÌ se maneja el caso en que la descripciÛn es nula.
+                                            // Aqu√≠ se maneja el caso en que la descripci√≥n es nula.
                                             string description = reader.IsDBNull(5) ? "" : reader.GetString(5);
 
                                             books.Add(new
@@ -511,7 +511,7 @@ namespace FunctionAppSmartRead
                         }
                         catch (Exception ex)
                         {
-                            _logger.LogError($"Error al obtener libros para la categorÌa {categoryId}: {ex.Message}");
+                            _logger.LogError($"Error al obtener libros para la categor√≠a {categoryId}: {ex.Message}");
                             return new StatusCodeResult(StatusCodes.Status500InternalServerError);
                         }
                     }
@@ -524,7 +524,7 @@ namespace FunctionAppSmartRead
                             {
                                 await conn.OpenAsync();
 
-                                // Trae los 10 libros con fecha de publicaciÛn m·s reciente
+                                // Trae los 10 libros con fecha de publicaci√≥n m√°s reciente
                                 string query = @"
                                     SELECT TOP 10 
                                         b.id_book, 
@@ -576,10 +576,10 @@ namespace FunctionAppSmartRead
                     }
                 case "addreview":
                     {
-                        // 1) Validar que se reciba el par·metro 'accesstoken'.
+                        // 1) Validar que se reciba el par√°metro 'accesstoken'.
                         string accessToken = req.Query["accesstoken"];
                         if (string.IsNullOrWhiteSpace(accessToken))
-                            return new BadRequestObjectResult("Debe proporcionar el par·metro 'accesstoken'.");
+                            return new BadRequestObjectResult("Debe proporcionar el par√°metro 'accesstoken'.");
 
                         // 2) Validar que el token sea correcto.
                         if (!IsTokenValid(accessToken))
@@ -589,16 +589,16 @@ namespace FunctionAppSmartRead
                         string username = GetUsernameFromToken(accessToken);
                         if (username == null)
                         {
-                            _logger.LogWarning("Access token v·lido pero sin claim de usuario.");
+                            _logger.LogWarning("Access token v√°lido pero sin claim de usuario.");
                             return new UnauthorizedResult();
                         }
-                        _logger.LogInformation($"Usuario extraÌdo: {username}");
+                        _logger.LogInformation($"Usuario extra√≠do: {username}");
 
-                        // 4) Leer y validar par·metros de la peticiÛn
+                        // 4) Leer y validar par√°metros de la petici√≥n
                         if (!int.TryParse(req.Query["bookId"], out int bookId))
-                            return new BadRequestObjectResult("Par·metro 'bookId' inv·lido o ausente.");
+                            return new BadRequestObjectResult("Par√°metro 'bookId' inv√°lido o ausente.");
                         if (!int.TryParse(req.Query["rating"], out int rating) || rating < 1 || rating > 5)
-                            return new BadRequestObjectResult("Par·metro 'rating' inv·lido. Debe ser un n˙mero entre 1 y 5.");
+                            return new BadRequestObjectResult("Par√°metro 'rating' inv√°lido. Debe ser un n√∫mero entre 1 y 5.");
                         string comment = req.Query["comment"];
 
                         try
@@ -635,7 +635,7 @@ namespace FunctionAppSmartRead
 
                                 if (reviewCount > 0)
                                 {
-                                    // 7a) Si ya tenÌa review, la actualizamos
+                                    // 7a) Si ya ten√≠a review, la actualizamos
                                     const string updateReviewSql = @"
                                         UPDATE dbo.review
                                         SET rating = @rating,
@@ -654,7 +654,7 @@ namespace FunctionAppSmartRead
                                 }
                                 else
                                 {
-                                    // 7b) Si no existÌa, insertamos nueva review
+                                    // 7b) Si no exist√≠a, insertamos nueva review
                                     const string insertReviewSql = @"
                                         INSERT INTO dbo.review (
                                             id_user,
@@ -679,11 +679,11 @@ namespace FunctionAppSmartRead
                                     }
                                 }
 
-                                // 8) Gestionar favorites seg˙n valoraciÛn
-                                //    Umbral: rating >= 3 ? favorito; rating < 3 ? eliminar de favoritos.
+                                // 8) Gestionar favorites seg√∫n valoraci√≥n
+                                //    Umbral: rating >= 3 ‚Üí favorito; rating < 3 ‚Üí eliminar de favoritos.
                                 if (rating >= 3)
                                 {
-                                    // AÒadir a favorites si no existe
+                                    // A√±adir a favorites si no existe
                                     const string checkFavSql = @"
                                         SELECT COUNT(1)
                                         FROM dbo.favorites
@@ -719,7 +719,7 @@ namespace FunctionAppSmartRead
                                 }
                                 else
                                 {
-                                    // Quitar de favorites si existÌa
+                                    // Quitar de favorites si exist√≠a
                                     const string deleteFavSql = @"
                                         DELETE FROM dbo.favorites
                                         WHERE id_user = @id_user
@@ -733,23 +733,88 @@ namespace FunctionAppSmartRead
                                 }
                             }
 
-                            return new OkObjectResult("ValoraciÛn procesada correctamente.");
+                            return new OkObjectResult("Valoraci√≥n procesada correctamente.");
                         }
                         catch (Exception ex)
                         {
-                            _logger.LogError($"Error al insertar/actualizar valoraciÛn o favoritos: {ex.Message}");
+                            _logger.LogError($"Error al insertar/actualizar valoraci√≥n o favoritos: {ex.Message}");
+                            return new StatusCodeResult(StatusCodes.Status500InternalServerError);
+                        }
+                    }
+                case "getpopularbooks":
+                    {
+                        // Validar que se reciba el par√°metro 'accesstoken'.
+                        string accessToken = req.Query["accesstoken"];
+                        if (string.IsNullOrWhiteSpace(accessToken))
+                        {
+                            return new BadRequestObjectResult("Debe proporcionar el par√°metro 'accesstoken'.");
+                        }
+
+                        // Validar que el token sea correcto.
+                        if (!IsTokenValid(accessToken))
+                        {
+                            return new UnauthorizedResult();
+                        }
+                        try
+                        {
+                            using (SqlConnection conn = new SqlConnection(_connectionString))
+                            {
+                                await conn.OpenAsync();
+                                string query = @"
+                                    SELECT TOP 10 
+                                        b.id_book, 
+                                        b.title, 
+                                        b.published_date, 
+                                        b.author, 
+                                        b.file_path, 
+                                        b.description
+                                    FROM dbo.book b
+                                    LEFT JOIN dbo.review r ON b.id_book = r.id_book
+                                    GROUP BY 
+                                        b.id_book, b.title, b.published_date, b.author, b.file_path, b.description
+                                    ORDER BY COUNT(r.id_review) DESC";
+
+                                var books = new List<object>();
+                                using (SqlCommand cmd = new SqlCommand(query, conn))
+                                using (SqlDataReader reader = await cmd.ExecuteReaderAsync())
+                                {
+                                    while (await reader.ReadAsync())
+                                    {
+                                        int idBook = reader.GetInt32(0);
+                                        string title = reader.GetString(1);
+                                        DateTime? publishedDate = reader.IsDBNull(2) ? (DateTime?)null : reader.GetDateTime(2);
+                                        string author = reader.GetString(3);
+                                        string filePath = reader.GetString(4);
+                                        string description = reader.IsDBNull(5) ? string.Empty : reader.GetString(5);
+
+                                        books.Add(new
+                                        {
+                                            IdBook = idBook,
+                                            Title = title,
+                                            PublishedDate = publishedDate,
+                                            Author = author,
+                                            FilePath = filePath,
+                                            Description = description
+                                        });
+                                    }
+                                }
+                                return new OkObjectResult(books);
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogError($"Error al obtener libros populares: {ex.Message}");
                             return new StatusCodeResult(StatusCodes.Status500InternalServerError);
                         }
                     }
 
-
                 default:
-                    return new BadRequestObjectResult("La acciÛn especificada no es v·lida. Use 'login', 'register', 'sendcode', 'validatecode', 'validate', 'refreshtoken', 'getcategories' o 'getmorebooks'.");
+                    return new BadRequestObjectResult("La acci√≥n especificada no es v√°lida. Use 'login', 'register', 'sendcode', 'validatecode', 'validate', 'refreshtoken', 'getcategories' o 'getmorebooks'.");
             }
         }
 
         /// <summary>
-        /// Genera un Access Token (JWT) con una expiraciÛn de 60 minutos.
+        /// Genera un Access Token (JWT) con una expiraci√≥n de 60 minutos.
         /// </summary>
         private string GenerateJwtToken(string username)
         {
@@ -774,7 +839,7 @@ namespace FunctionAppSmartRead
         }
 
         /// <summary>
-        /// Genera un Refresh Token (JWT) con una expiraciÛn de 7 dÌas.
+        /// Genera un Refresh Token (JWT) con una expiraci√≥n de 7 d√≠as.
         /// </summary>
         private string GenerateRefreshJwtToken(string username)
         {
@@ -799,8 +864,8 @@ namespace FunctionAppSmartRead
         }
 
         /// <summary>
-        /// Valida el token (JWT) usando la misma clave secreta y par·metros de validaciÛn.
-        /// Retorna true si el token es v·lido y no ha expirado; de lo contrario, false.
+        /// Valida el token (JWT) usando la misma clave secreta y par√°metros de validaci√≥n.
+        /// Retorna true si el token es v√°lido y no ha expirado; de lo contrario, false.
         /// </summary>
         private bool IsTokenValid(string token)
         {
@@ -860,7 +925,7 @@ namespace FunctionAppSmartRead
             }
             catch
             {
-                // Token inv·lido o expirado
+                // Token inv√°lido o expirado
                 return null;
             }
         }
