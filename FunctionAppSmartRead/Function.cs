@@ -807,6 +807,94 @@ namespace FunctionAppSmartRead
                             return new StatusCodeResult(StatusCodes.Status500InternalServerError);
                         }
                     }
+                case "addtolist":
+                    {
+                        // Validar que se reciba el parámetro 'accesstoken'.
+                        string accessToken = req.Query["accesstoken"];
+                        if (string.IsNullOrWhiteSpace(accessToken))
+                        {
+                            return new BadRequestObjectResult("Debe proporcionar el parámetro 'accesstoken'.");
+                        }
+
+                        // Validar que el token sea correcto.
+                        if (!IsTokenValid(accessToken))
+                        {
+                            return new UnauthorizedResult();
+                        }
+
+                        // 2) Extraer usuario
+                        string username = GetUsernameFromToken(accessToken);
+                        if (username == null)
+                            return new UnauthorizedResult();
+
+                        // 3) Validar parámetro bookId
+                        if (!int.TryParse(req.Query["bookId"], out int bookId))
+                            return new BadRequestObjectResult("Parámetro 'bookId' inválido o ausente.");
+
+                        try
+                        {
+                            using (SqlConnection conn = new SqlConnection(_connectionString))
+                            {
+                                await conn.OpenAsync();
+
+                                // 4) Obtener id_user
+                                int userId;
+                                using (var cmdUser = new SqlCommand(
+                                    "SELECT id_user FROM [User] WHERE Username = @username", conn))
+                                {
+                                    cmdUser.Parameters.AddWithValue("@username", username);
+                                    object res = await cmdUser.ExecuteScalarAsync();
+                                    if (res == null)
+                                        return new BadRequestObjectResult("Usuario no encontrado.");
+                                    userId = Convert.ToInt32(res);
+                                }
+
+                                // 5) Comprobar si ya existe en watch_later
+                                const string checkSql = @"
+                                    SELECT COUNT(1)
+                                      FROM dbo.watch_later
+                                     WHERE id_user = @id_user
+                                       AND id_book = @id_book";
+                                int existCount;
+                                using (var cmdCheck = new SqlCommand(checkSql, conn))
+                                {
+                                    cmdCheck.Parameters.AddWithValue("@id_user", userId);
+                                    cmdCheck.Parameters.AddWithValue("@id_book", bookId);
+                                    existCount = Convert.ToInt32(await cmdCheck.ExecuteScalarAsync());
+                                }
+
+                                if (existCount > 0)
+                                {
+                                    return new OkObjectResult("El libro ya está en tu lista de 'ver más tarde'.");
+                                }
+
+                                // 6) Insertar en watch_later
+                                const string insertSql = @"
+                                    INSERT INTO dbo.watch_later (
+                                        id_user,
+                                        id_book,
+                                        created_at
+                                    ) VALUES (
+                                        @id_user,
+                                        @id_book,
+                                        SYSDATETIME()
+                                    )";
+                                using (var cmdInsert = new SqlCommand(insertSql, conn))
+                                {
+                                    cmdInsert.Parameters.AddWithValue("@id_user", userId);
+                                    cmdInsert.Parameters.AddWithValue("@id_book", bookId);
+                                    await cmdInsert.ExecuteNonQueryAsync();
+                                }
+                            }
+
+                            return new OkObjectResult("Libro añadido a tu lista de 'ver más tarde' correctamente.");
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogError($"Error al añadir libro a watch_later: {ex.Message}");
+                            return new StatusCodeResult(StatusCodes.Status500InternalServerError);
+                        }
+                    }
 
                 default:
                     return new BadRequestObjectResult("La acción especificada no es válida. Use 'login', 'register', 'sendcode', 'validatecode', 'validate', 'refreshtoken', 'getcategories' o 'getmorebooks'.");
