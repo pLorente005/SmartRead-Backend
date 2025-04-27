@@ -895,6 +895,75 @@ namespace FunctionAppSmartRead
                             return new StatusCodeResult(StatusCodes.Status500InternalServerError);
                         }
                     }
+                case "searchbooks":
+                    {
+                        // 1) Validar que se reciba el parámetro 'accesstoken'.
+                        string accessToken = req.Query["accesstoken"];
+                        if (string.IsNullOrWhiteSpace(accessToken))
+                        {
+                            return new BadRequestObjectResult("Debe proporcionar el parámetro 'accesstoken'.");
+                        }
+
+                        // Validar que el token sea correcto.
+                        if (!IsTokenValid(accessToken))
+                        {
+                            return new UnauthorizedResult();
+                        }
+
+                        // 3) Leer y validar el término de búsqueda
+                        string searchTerm = req.Query["query"];
+                        if (string.IsNullOrWhiteSpace(searchTerm))
+                        {
+                            return new BadRequestObjectResult("Debe proporcionar el parámetro 'query' con el texto a buscar.");
+                        }
+
+                        try
+                        {
+                            using (SqlConnection conn = new SqlConnection(_connectionString))
+                            {
+                                await conn.OpenAsync();
+
+                                // 4) Buscar en título o autor usando LIKE
+                                string sql = @"
+                                    SELECT id_book, title, published_date, author, file_path, description
+                                    FROM dbo.book
+                                    WHERE title    LIKE @pattern
+                                       OR author   LIKE @pattern
+                                    ORDER BY title";
+
+                                using (SqlCommand cmd = new SqlCommand(sql, conn))
+                                {
+                                    string pattern = "%" + searchTerm + "%";
+                                    cmd.Parameters.AddWithValue("@pattern", pattern);
+
+                                    var results = new List<object>();
+                                    using (SqlDataReader reader = await cmd.ExecuteReaderAsync())
+                                    {
+                                        while (await reader.ReadAsync())
+                                        {
+                                            results.Add(new
+                                            {
+                                                IdBook = reader.GetInt32(0),
+                                                Title = reader.GetString(1),
+                                                PublishedDate = reader.IsDBNull(2) ? (DateTime?)null : reader.GetDateTime(2),
+                                                Author = reader.GetString(3),
+                                                FilePath = reader.GetString(4),
+                                                Description = reader.IsDBNull(5) ? "" : reader.GetString(5)
+                                            });
+                                        }
+                                    }
+
+                                    return new OkObjectResult(results);
+                                }
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogError($"Error en searchbooks: {ex.Message}");
+                            return new StatusCodeResult(StatusCodes.Status500InternalServerError);
+                        }
+                    }
+
 
                 default:
                     return new BadRequestObjectResult("La acción especificada no es válida. Use 'login', 'register', 'sendcode', 'validatecode', 'validate', 'refreshtoken', 'getcategories' o 'getmorebooks'.");
