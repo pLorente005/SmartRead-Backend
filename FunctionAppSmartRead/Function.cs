@@ -1129,7 +1129,55 @@ namespace FunctionAppSmartRead
                             return new StatusCodeResult(StatusCodes.Status500InternalServerError);
                         }
                     }
+                case "removetolist":
+                    {
+                        string accessToken = req.Query["accesstoken"];
+                        if (string.IsNullOrWhiteSpace(accessToken))
+                            return new BadRequestObjectResult("Debe proporcionar el parámetro 'accesstoken'.");
+                        if (!IsTokenValid(accessToken))
+                            return new UnauthorizedResult();
 
+                        string username = GetUsernameFromToken(accessToken);
+                        if (username == null)
+                            return new UnauthorizedResult();
+                        if (!int.TryParse(req.Query["bookId"], out int bookId))
+                            return new BadRequestObjectResult("Parámetro 'bookId' inválido o ausente.");
+
+                        try
+                        {
+                            using var conn = new SqlConnection(_connectionString);
+                            await conn.OpenAsync();
+
+                            // 1) Obtener id_user
+                            int userId;
+                            using (var cmdU = new SqlCommand("SELECT id_user FROM dbo.[User] WHERE Username = @username", conn))
+                            {
+                                cmdU.Parameters.AddWithValue("@username", username);
+                                var res = await cmdU.ExecuteScalarAsync();
+                                if (res == null) return new BadRequestObjectResult("Usuario no encontrado.");
+                                userId = Convert.ToInt32(res);
+                            }
+
+                            // 2) Eliminar
+                            const string delSql = @"
+                                DELETE FROM dbo.watch_later
+                                 WHERE id_user = @userId
+                                   AND id_book = @bookId";
+                            using var cmdDel = new SqlCommand(delSql, conn);
+                            cmdDel.Parameters.AddWithValue("@userId", userId);
+                            cmdDel.Parameters.AddWithValue("@bookId", bookId);
+                            int rows = await cmdDel.ExecuteNonQueryAsync();
+
+                            return new OkObjectResult(rows > 0
+                                ? "Libro eliminado de Mi Lista."
+                                : "El libro no se encontró en Mi Lista.");
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogError($"Error al quitar de Mi Lista: {ex.Message}");
+                            return new StatusCodeResult(StatusCodes.Status500InternalServerError);
+                        }
+                    }
                 default:
                     return new BadRequestObjectResult("La acción especificada no es válida. Use 'login', 'register', 'sendcode', 'validatecode', 'validate', 'refreshtoken', 'getcategories' o 'getmorebooks'.");
             }
