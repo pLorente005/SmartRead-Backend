@@ -467,12 +467,12 @@ namespace FunctionAppSmartRead
                                 // Consulta para obtener los libros asociados a la categoría con paginación.
                                 // Se utilizan OFFSET y FETCH NEXT para limitar los resultados.
                                 string query = @"
-                SELECT b.id_book, b.title, b.published_date, b.author, b.file_path, b.description
-                FROM book b
-                INNER JOIN book_category bc ON b.id_book = bc.id_book
-                WHERE bc.id_category = @categoryId
-                ORDER BY b.id_book
-                OFFSET @offset ROWS FETCH NEXT @limit ROWS ONLY";
+                                    SELECT b.id_book, b.title, b.published_date, b.author, b.file_path, b.description
+                                    FROM book b
+                                    INNER JOIN book_category bc ON b.id_book = bc.id_book
+                                    WHERE bc.id_category = @categoryId
+                                    ORDER BY b.id_book
+                                    OFFSET @offset ROWS FETCH NEXT @limit ROWS ONLY";
 
                                 var books = new List<object>();
                                 using (SqlCommand cmd = new SqlCommand(query, conn))
@@ -963,7 +963,172 @@ namespace FunctionAppSmartRead
                             return new StatusCodeResult(StatusCodes.Status500InternalServerError);
                         }
                     }
+                case "getcategoriesbybook":
+                    {
+                          // 1) Validar que se reciba el parámetro 'accesstoken'.
+                        string accessToken = req.Query["accesstoken"];
+                        if (string.IsNullOrWhiteSpace(accessToken))
+                        {
+                            return new BadRequestObjectResult("Debe proporcionar el parámetro 'accesstoken'.");
+                        }
 
+                        // Validar que el token sea correcto.
+                        if (!IsTokenValid(accessToken))
+                        {
+                            return new UnauthorizedResult();
+                        }
+                        // 3) Validar que se reciba 'bookId' y que sea un entero válido.
+                        if (!int.TryParse(req.Query["bookId"], out int bookId))
+                            return new BadRequestObjectResult("Debe proporcionar un 'bookId' válido.");
+
+                        try
+                        {
+                            using (SqlConnection conn = new SqlConnection(_connectionString))
+                            {
+                                await conn.OpenAsync();
+
+                                // 4) Consulta para obtener las categorías del libro.
+                                string query = @"
+                                    SELECT c.id_category, c.name
+                                    FROM category c
+                                    INNER JOIN book_category bc ON c.id_category = bc.id_category
+                                    WHERE bc.id_book = @bookId";
+
+                                var categories = new List<object>();
+                                using (SqlCommand cmd = new SqlCommand(query, conn))
+                                {
+                                    cmd.Parameters.AddWithValue("@bookId", bookId);
+
+                                    using (SqlDataReader reader = await cmd.ExecuteReaderAsync())
+                                    {
+                                        while (await reader.ReadAsync())
+                                        {
+                                            categories.Add(new
+                                            {
+                                                IdCategory = reader.GetInt32(0),
+                                                Name = reader.GetString(1)
+                                            });
+                                        }
+                                    }
+                                }
+
+                                // 5) Retornar la lista de categorías en JSON.
+                                return new OkObjectResult(categories);
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogError($"Error al obtener categorías para el libro {bookId}: {ex.Message}");
+                            return new StatusCodeResult(StatusCodes.Status500InternalServerError);
+                        }
+                    }
+                case "getlikedbooks":
+                    {
+                        string accessToken = req.Query["accesstoken"];
+                        if (string.IsNullOrWhiteSpace(accessToken))
+                            return new BadRequestObjectResult("Debe proporcionar el parámetro 'accesstoken'.");
+                        if (!IsTokenValid(accessToken))
+                            return new UnauthorizedResult();
+
+                        string username = GetUsernameFromToken(accessToken);
+                        if (username == null)
+                            return new UnauthorizedResult();
+
+                        try
+                        {
+                            using var conn = new SqlConnection(_connectionString);
+                            await conn.OpenAsync();
+
+                            string sql = @"
+                                SELECT b.id_book, b.title, b.published_date, b.author, b.file_path, b.description
+                                FROM dbo.favorites f
+                                INNER JOIN dbo.[User] u ON u.id_user = f.id_user
+                                INNER JOIN dbo.book b ON b.id_book = f.id_book
+                                WHERE u.Username = @username
+                                ORDER BY f.created_at DESC";
+
+                            var favs = new List<object>();
+                            using (var cmd = new SqlCommand(sql, conn))
+                            {
+                                cmd.Parameters.AddWithValue("@username", username);
+                                using var reader = await cmd.ExecuteReaderAsync();
+                                while (await reader.ReadAsync())
+                                {
+                                    favs.Add(new
+                                    {
+                                        IdBook = reader.GetInt32(0),
+                                        Title = reader.GetString(1),
+                                        PublishedDate = reader.IsDBNull(2) ? (DateTime?)null : reader.GetDateTime(2),
+                                        Author = reader.GetString(3),
+                                        FilePath = reader.GetString(4),
+                                        Description = reader.IsDBNull(5) ? "" : reader.GetString(5)
+                                    });
+                                }
+                            }
+
+                            return new OkObjectResult(favs);
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogError($"Error al obtener favoritos: {ex.Message}");
+                            return new StatusCodeResult(StatusCodes.Status500InternalServerError);
+                        }
+                    }
+                case "getmylist":
+                    {
+                        // 1) Validar access token
+                        string accessToken = req.Query["accesstoken"];
+                        if (string.IsNullOrWhiteSpace(accessToken))
+                            return new BadRequestObjectResult("Debe proporcionar el parámetro 'accesstoken'.");
+                        if (!IsTokenValid(accessToken))
+                            return new UnauthorizedResult();
+
+                        // 2) Extraer username y luego id_user
+                        string username = GetUsernameFromToken(accessToken);
+                        if (username == null)
+                            return new UnauthorizedResult();
+
+                        try
+                        {
+                            using var conn = new SqlConnection(_connectionString);
+                            await conn.OpenAsync();
+
+                            // 3) Consulta: join watch_later con book para devolver los datos
+                            string sql = @"
+                                SELECT b.id_book, b.title, b.published_date, b.author, b.file_path, b.description
+                                FROM dbo.watch_later wl
+                                INNER JOIN dbo.[User] u ON u.id_user = wl.id_user
+                                INNER JOIN dbo.book b ON b.id_book = wl.id_book
+                                WHERE u.Username = @username
+                                ORDER BY wl.created_at DESC";
+
+                            var list = new List<object>();
+                            using (var cmd = new SqlCommand(sql, conn))
+                            {
+                                cmd.Parameters.AddWithValue("@username", username);
+                                using var reader = await cmd.ExecuteReaderAsync();
+                                while (await reader.ReadAsync())
+                                {
+                                    list.Add(new
+                                    {
+                                        IdBook = reader.GetInt32(0),
+                                        Title = reader.GetString(1),
+                                        PublishedDate = reader.IsDBNull(2) ? (DateTime?)null : reader.GetDateTime(2),
+                                        Author = reader.GetString(3),
+                                        FilePath = reader.GetString(4),
+                                        Description = reader.IsDBNull(5) ? "" : reader.GetString(5)
+                                    });
+                                }
+                            }
+
+                            return new OkObjectResult(list);
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogError($"Error al obtener Mi Lista: {ex.Message}");
+                            return new StatusCodeResult(StatusCodes.Status500InternalServerError);
+                        }
+                    }
 
                 default:
                     return new BadRequestObjectResult("La acción especificada no es válida. Use 'login', 'register', 'sendcode', 'validatecode', 'validate', 'refreshtoken', 'getcategories' o 'getmorebooks'.");
