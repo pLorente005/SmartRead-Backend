@@ -12,6 +12,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.Data.SqlClient;
 using System.Collections.Generic;
+using System.Text.Json;
 
 namespace FunctionAppSmartRead
 {
@@ -1175,6 +1176,81 @@ namespace FunctionAppSmartRead
                         catch (Exception ex)
                         {
                             _logger.LogError($"Error al quitar de Mi Lista: {ex.Message}");
+                            return new StatusCodeResult(StatusCodes.Status500InternalServerError);
+                        }
+                    }
+                case "getbooksbyids":
+                    {
+                        // 1) Validar access token
+                        string accessToken = req.Query["accesstoken"];
+                        if (string.IsNullOrWhiteSpace(accessToken))
+                            return new BadRequestObjectResult("Debe proporcionar el parámetro 'accesstoken'.");
+                        if (!IsTokenValid(accessToken))
+                            return new UnauthorizedResult();
+
+                        // 2) Leer y deserializar lista de IDs del cuerpo JSON
+                        string requestBody;
+                        using (var reader = new StreamReader(req.Body))
+                            requestBody = await reader.ReadToEndAsync();
+
+                        List<int> ids;
+                        try
+                        {
+                            ids = JsonSerializer.Deserialize<List<int>>(requestBody);
+                        }
+                        catch
+                        {
+                            return new BadRequestObjectResult("El cuerpo de la petición debe ser un JSON con una lista de enteros (IDs de libros).");
+                        }
+
+                        if (ids == null || ids.Count == 0)
+                            return new BadRequestObjectResult("Debe proporcionar una lista de IDs de libros en el cuerpo de la petición.");
+
+                        try
+                        {
+                            using (SqlConnection conn = new SqlConnection(_connectionString))
+                            {
+                                await conn.OpenAsync();
+
+                                // Construir consulta con parámetros dinámicos para IN
+                                var paramNames = new List<string>();
+                                for (int i = 0; i < ids.Count; i++)
+                                    paramNames.Add($"@id{i}");
+
+                                string sql = $@"
+                                    SELECT id_book, title, published_date, author, file_path, description
+                                    FROM dbo.book
+                                    WHERE id_book IN ({string.Join(",", paramNames)})";
+
+                                var books = new List<object>();
+                                using (SqlCommand cmd = new SqlCommand(sql, conn))
+                                {
+                                    for (int i = 0; i < ids.Count; i++)
+                                        cmd.Parameters.AddWithValue(paramNames[i], ids[i]);
+
+                                    using (SqlDataReader reader = await cmd.ExecuteReaderAsync())
+                                    {
+                                        while (await reader.ReadAsync())
+                                        {
+                                            books.Add(new
+                                            {
+                                                IdBook = reader.GetInt32(0),
+                                                Title = reader.GetString(1),
+                                                PublishedDate = reader.IsDBNull(2) ? (DateTime?)null : reader.GetDateTime(2),
+                                                Author = reader.GetString(3),
+                                                FilePath = reader.GetString(4),
+                                                Description = reader.IsDBNull(5) ? string.Empty : reader.GetString(5)
+                                            });
+                                        }
+                                    }
+                                }
+
+                                return new OkObjectResult(books);
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogError($"Error al obtener libros por IDs: {ex.Message}");
                             return new StatusCodeResult(StatusCodes.Status500InternalServerError);
                         }
                     }
