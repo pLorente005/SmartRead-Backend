@@ -13,6 +13,8 @@ using Microsoft.IdentityModel.Tokens;
 using Microsoft.Data.SqlClient;
 using System.Collections.Generic;
 using System.Text.Json;
+using static System.Runtime.InteropServices.JavaScript.JSType;
+using Stripe;
 
 namespace FunctionAppSmartRead
 {
@@ -1254,6 +1256,58 @@ namespace FunctionAppSmartRead
                             return new StatusCodeResult(StatusCodes.Status500InternalServerError);
                         }
                     }
+
+                case "createcheckoutsession":
+                    {
+                        try
+                        {
+                            var stripeKey = Environment.GetEnvironmentVariable("STRIPE_SECRET_KEY");
+                            if (string.IsNullOrEmpty(stripeKey))
+                            {
+                                _logger.LogError("STRIPE_SECRET_KEY is not set.");
+                                return new StatusCodeResult(500);
+                            }
+
+                            Stripe.StripeConfiguration.ApiKey = stripeKey;
+
+                            var options = new Stripe.Checkout.SessionCreateOptions
+                            {
+                                PaymentMethodTypes = new List<string> { "card" },
+                                LineItems = new List<Stripe.Checkout.SessionLineItemOptions>
+                                {
+                                    new Stripe.Checkout.SessionLineItemOptions
+                                    {
+                                        PriceData = new Stripe.Checkout.SessionLineItemPriceDataOptions
+                                        {
+                                            Currency = "usd",
+                                            UnitAmount = 9900, // $99.00 en centavos
+                                            ProductData = new Stripe.Checkout.SessionLineItemPriceDataProductDataOptions
+                                            {
+                                                Name = "Suscripción SmartRead"
+                                            },
+                                        },
+                                        Quantity = 1,
+                                    },
+                                },
+                                Mode = "payment",
+                                SuccessUrl = "https://smartread.app/success",
+                                CancelUrl = "https://smartread.app/cancel",
+                            };
+
+                            var service = new Stripe.Checkout.SessionService();
+                            var session = await service.CreateAsync(options);
+
+                            return new OkObjectResult(new { url = session.Url });
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogError($"Error al crear la sesión de Stripe: {ex.Message}");
+                            return new StatusCodeResult(500);
+                        }
+                    }
+
+
+
                 default:
                     return new BadRequestObjectResult("La acción especificada no es válida. Use 'login', 'register', 'sendcode', 'validatecode', 'validate', 'refreshtoken', 'getcategories' o 'getmorebooks'.");
             }
