@@ -110,53 +110,94 @@ namespace FunctionAppSmartRead
 
                 case "register":
                     {
-                        // Lógica de registro
+                        // 1) Leer parámetros
                         string username = req.Query["username"];
                         string password = req.Query["password"];
                         string email = req.Query["email"];
+                        string sessionId = req.Query["sessionId"];
 
                         if (string.IsNullOrWhiteSpace(username) ||
                             string.IsNullOrWhiteSpace(password) ||
-                            string.IsNullOrWhiteSpace(email))
+                            string.IsNullOrWhiteSpace(email) ||
+                            string.IsNullOrWhiteSpace(sessionId))
                         {
-                            return new BadRequestObjectResult("Para registro, debe proporcionar 'username', 'password' y 'email'.");
+                            return new BadRequestObjectResult(
+                                "Para registro, debe proporcionar 'username', 'password', 'email' y 'sessionId'.");
                         }
 
                         try
                         {
+                            // 2) Obtener sesión de Stripe y validar uso/pago
+                            StripeConfiguration.ApiKey = Environment.GetEnvironmentVariable("STRIPE_SECRET_KEY");
+                            var sessionService = new Stripe.Checkout.SessionService();
+                            var stripeSession = await sessionService.GetAsync(sessionId);
+
+                            // 2a) Verificar si ya se usó esta sesión
+                            if (stripeSession.Metadata.TryGetValue("used", out var used) && used == "true")
+                            {
+                                return new BadRequestObjectResult("Esta sesión de pago ya ha sido utilizada.");
+                            }
+
+                            // 2b) Verificar que el pago se completó
+                            if (stripeSession.PaymentStatus != "paid")
+                            {
+                                return new BadRequestObjectResult("El pago no se ha completado correctamente.");
+                            }
+
                             using (SqlConnection conn = new SqlConnection(_connectionString))
                             {
                                 await conn.OpenAsync();
 
-                                // Verificar si el usuario o el correo ya existen.
-                                string checkQuery = "SELECT COUNT(1) FROM [User] WHERE Username = @username OR Email = @email";
-                                using (SqlCommand checkCmd = new SqlCommand(checkQuery, conn))
+                                // 3) Verificar si el usuario o el correo ya existen
+                                const string checkUserSql = @"
+                SELECT COUNT(1)
+                FROM [User]
+                WHERE Username = @username OR Email = @email";
+                                using (var checkUserCmd = new SqlCommand(checkUserSql, conn))
                                 {
-                                    checkCmd.Parameters.AddWithValue("@username", username);
-                                    checkCmd.Parameters.AddWithValue("@email", email);
-                                    object checkResult = await checkCmd.ExecuteScalarAsync();
-                                    int existingUserCount = (checkResult != null ? Convert.ToInt32(checkResult) : 0);
-
+                                    checkUserCmd.Parameters.AddWithValue("@username", username);
+                                    checkUserCmd.Parameters.AddWithValue("@email", email);
+                                    int existingUserCount = Convert.ToInt32(await checkUserCmd.ExecuteScalarAsync());
                                     if (existingUserCount > 0)
                                     {
                                         return new ConflictObjectResult("El usuario o el correo ya existen.");
                                     }
                                 }
 
-                                // Insertar nuevo usuario.
-                                string insertQuery = "INSERT INTO [User] (Username, Password, Email) VALUES (@username, @password, @email)";
-                                using (SqlCommand insertCmd = new SqlCommand(insertQuery, conn))
+                                // 4) Insertar nuevo usuario
+                                const string insertUserSql = @"
+                INSERT INTO [User] (Username, Password, Email)
+                VALUES (@username, @password, @email)";
+                                using (var insertUserCmd = new SqlCommand(insertUserSql, conn))
                                 {
-                                    insertCmd.Parameters.AddWithValue("@username", username);
-                                    insertCmd.Parameters.AddWithValue("@password", password);
-                                    insertCmd.Parameters.AddWithValue("@email", email);
+                                    insertUserCmd.Parameters.AddWithValue("@username", username);
+                                    insertUserCmd.Parameters.AddWithValue("@password", password);
+                                    insertUserCmd.Parameters.AddWithValue("@email", email);
 
-                                    int rowsAffected = await insertCmd.ExecuteNonQueryAsync();
-                                    return rowsAffected > 0
-                                        ? new OkObjectResult("Usuario registrado exitosamente.")
-                                        : new StatusCodeResult(StatusCodes.Status500InternalServerError);
+                                    int rowsAffected = await insertUserCmd.ExecuteNonQueryAsync();
+                                    if (rowsAffected <= 0)
+                                    {
+                                        return new StatusCodeResult(StatusCodes.Status500InternalServerError);
+                                    }
                                 }
                             }
+
+                            // 5) Marcar sessionId como usado en metadata de Stripe tras registro exitoso
+                            var updateOptions = new Stripe.Checkout.SessionUpdateOptions
+                            {
+                                Metadata = new Dictionary<string, string>
+            {
+                { "used", "true" }
+            }
+                            };
+                            await sessionService.UpdateAsync(sessionId, updateOptions);
+
+                            return new OkObjectResult("Usuario registrado exitosamente.");
+                        }
+                        catch (StripeException sx)
+                        {
+                            _logger.LogError($"Error al comprobar el pago en Stripe: {sx.Message}");
+                            return new StatusCodeResult(StatusCodes.Status502BadGateway);
                         }
                         catch (Exception ex)
                         {
@@ -1297,7 +1338,11 @@ namespace FunctionAppSmartRead
                             var service = new Stripe.Checkout.SessionService();
                             var session = await service.CreateAsync(options);
 
-                            return new OkObjectResult(new { url = session.Url });
+                            return new OkObjectResult(new
+                            {
+                                url = session.Url,
+                                sessionId = session.Id   
+                            });
                         }
                         catch (Exception ex)
                         {
