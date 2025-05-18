@@ -1351,6 +1351,195 @@ namespace FunctionAppSmartRead
                         }
                     }
 
+                case "getrecommendedbooksbyids":
+                    {
+                        // 1) Validar access token
+                        string accessToken = req.Query["accesstoken"];
+                        if (string.IsNullOrWhiteSpace(accessToken))
+                            return new BadRequestObjectResult("Debe proporcionar el parámetro 'accesstoken'.");
+                        if (!IsTokenValid(accessToken))
+                            return new UnauthorizedResult();
+
+                        // 2) Extraer username desde el token
+                        string username = GetUsernameFromToken(accessToken);
+                        if (username == null)
+                        {
+                            _logger.LogWarning("Access token válido pero sin claim de usuario.");
+                            return new UnauthorizedResult();
+                        }
+                        _logger.LogInformation($"Usuario extraído: {username}");
+
+                        // 3) Leer bookIds de la query string
+                        var idsQuery = req.Query["bookIds"].FirstOrDefault();
+                        if (string.IsNullOrWhiteSpace(idsQuery))
+                            return new BadRequestObjectResult("Debe proporcionar 'bookIds' en la query (IDs separados por coma).");
+
+                        List<int> ids;
+                        try
+                        {
+                            ids = idsQuery
+                                .Split(',', StringSplitOptions.RemoveEmptyEntries)
+                                .Select(s => int.Parse(s.Trim()))
+                                .ToList();
+                        }
+                        catch
+                        {
+                            return new BadRequestObjectResult("El parámetro 'bookIds' debe ser números separados por coma.");
+                        }
+                        if (ids.Count == 0)
+                            return new BadRequestObjectResult("Debe proporcionar al menos un ID de libro.");
+
+                        // 4) Conectar a la base de datos
+                        try
+                        {
+                            using var conn = new SqlConnection(_connectionString);
+                            await conn.OpenAsync();
+
+                            // 5) Obtener id_user
+                            int userId;
+                            using (var cmdU = new SqlCommand(
+                                "SELECT id_user FROM [User] WHERE Username = @username", conn))
+                            {
+                                cmdU.Parameters.AddWithValue("@username", username);
+                                var res = await cmdU.ExecuteScalarAsync();
+                                if (res == null)
+                                    return new BadRequestObjectResult("Usuario no encontrado.");
+                                userId = Convert.ToInt32(res);
+                            }
+
+                            // 6) Construir lista de parámetros para el IN (...)
+                            var paramIds = ids
+                                .Select((id, i) => new { Name = $"@id{i}", Value = id })
+                                .ToList();
+                            string inList = string.Join(",", paramIds.Select(p => p.Name));
+
+                            // 7) Comprobar cuántos de esos libros ha valorado el usuario
+                            int ratedCount;
+                            using (var cmdCount = new SqlCommand(
+                                $"SELECT COUNT(1) FROM dbo.review WHERE id_user = @userId AND id_book IN ({inList})", conn))
+                            {
+                                cmdCount.Parameters.AddWithValue("@userId", userId);
+                                foreach (var p in paramIds)
+                                    cmdCount.Parameters.AddWithValue(p.Name, p.Value);
+                                ratedCount = Convert.ToInt32(await cmdCount.ExecuteScalarAsync());
+                            }
+
+                            // 8) Elegir SQL según si hay valoraciones o no
+                            string sql;
+                            if (ratedCount > 0)
+                            {
+                                // 8a) Content‐based con pesos según sus ratings
+                                sql = $@"
+WITH UserRatings AS (
+    SELECT id_book, rating
+    FROM dbo.review
+    WHERE id_user = @userId
+      AND id_book IN ({inList})
+),
+PrefCategories AS (
+    SELECT bc.id_category, AVG(ur.rating) AS weight
+    FROM dbo.book_category bc
+    INNER JOIN UserRatings ur ON bc.id_book = ur.id_book
+    GROUP BY bc.id_category
+),
+CandidateBooks AS (
+    SELECT b.id_book, b.title, b.published_date, b.author, b.file_path, b.description,
+           pc.weight
+    FROM dbo.book b
+    INNER JOIN dbo.book_category bc2 ON b.id_book = bc2.id_book
+    INNER JOIN PrefCategories pc ON bc2.id_category = pc.id_category
+    WHERE b.id_book NOT IN ({inList})
+),
+ScoredBooks AS (
+    SELECT 
+      cb.id_book,
+      MAX(cb.title)         AS title,
+      MAX(cb.published_date) AS published_date,
+      MAX(cb.author)        AS author,
+      MAX(cb.file_path)     AS file_path,
+      MAX(cb.description)   AS description,
+      SUM(cb.weight)        AS score,
+      COUNT(*)              AS matches
+    FROM CandidateBooks cb
+    GROUP BY cb.id_book
+)
+SELECT TOP 10
+   sb.id_book, sb.title, sb.published_date, sb.author, sb.file_path, sb.description,
+   sb.score, sb.matches
+FROM ScoredBooks sb
+ORDER BY sb.score DESC, sb.matches DESC;";
+                            }
+                            else
+                            {
+                                // 8b) Fallback: content‐based según categorías de los IDs enviados
+                                sql = $@"
+WITH PrefCategories AS (
+    SELECT bc.id_category, COUNT(*) AS weight
+    FROM dbo.book_category bc
+    WHERE bc.id_book IN ({inList})
+    GROUP BY bc.id_category
+),
+CandidateBooks AS (
+    SELECT b.id_book, b.title, b.published_date, b.author, b.file_path, b.description,
+           pc.weight
+    FROM dbo.book b
+    INNER JOIN dbo.book_category bc2 ON b.id_book = bc2.id_book
+    INNER JOIN PrefCategories pc ON bc2.id_category = pc.id_category
+    WHERE b.id_book NOT IN ({inList})
+),
+ScoredBooks AS (
+    SELECT 
+      cb.id_book,
+      MAX(cb.title)         AS title,
+      MAX(cb.published_date) AS published_date,
+      MAX(cb.author)        AS author,
+      MAX(cb.file_path)     AS file_path,
+      MAX(cb.description)   AS description,
+      SUM(cb.weight)        AS score,
+      COUNT(*)              AS matches
+    FROM CandidateBooks cb
+    GROUP BY cb.id_book
+)
+SELECT TOP 10
+   sb.id_book, sb.title, sb.published_date, sb.author, sb.file_path, sb.description,
+   sb.score, sb.matches
+FROM ScoredBooks sb
+ORDER BY sb.score DESC, sb.matches DESC;";
+                            }
+
+                            // 9) Ejecutar la consulta elegida
+                            using var cmd = new SqlCommand(sql, conn);
+                            if (ratedCount > 0)
+                                cmd.Parameters.AddWithValue("@userId", userId);
+                            foreach (var p in paramIds)
+                                cmd.Parameters.AddWithValue(p.Name, p.Value);
+
+                            var recommendations = new List<object>();
+                            using var rdr = await cmd.ExecuteReaderAsync();
+                            while (await rdr.ReadAsync())
+                            {
+                                recommendations.Add(new
+                                {
+                                    IdBook = rdr.GetInt32(0),
+                                    Title = rdr.GetString(1),
+                                    PublishedDate = rdr.IsDBNull(2) ? (DateTime?)null : rdr.GetDateTime(2),
+                                    Author = rdr.GetString(3),
+                                    FilePath = rdr.GetString(4),
+                                    Description = rdr.IsDBNull(5) ? "" : rdr.GetString(5),
+                                    Score = ratedCount > 0 ? rdr.GetDecimal(6) : (decimal?)null,
+                                    Matches = ratedCount > 0 ? rdr.GetInt32(7) : (int?)null
+                                });
+                            }
+
+                            return new OkObjectResult(recommendations);
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogError($"Error en getrecommendedbooksbyids: {ex}");
+                            return new StatusCodeResult(StatusCodes.Status500InternalServerError);
+                        }
+                    }
+
 
 
                 default:
